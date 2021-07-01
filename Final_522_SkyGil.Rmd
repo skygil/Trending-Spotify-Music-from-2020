@@ -1,0 +1,214 @@
+---
+title: "ISQA 522 Final Project"
+author: "Skye Gilbreth"
+date: "1/31/2021"
+output:
+  word_document: default
+  html_document: default
+---
+
+![](/cloud/project/Final/Images/spotify2.jpg)  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#load packages
+suppressPackageStartupMessages(library(lessR))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(knitr))
+suppressPackageStartupMessages(library(sqldf))
+
+#turn suggestions off to save space & turn off frequency in console
+style(suggest=FALSE)
+```
+
+## Introduction  
+I love music. Since March 2020 (when the pandemic started), I have been home a lot more than ever before! To stay focused and motivated, I find a multitude of ways to occupy myself. One of the ways I am able to do this is through music. So, for my final project, I decided to analyze music from [Spotify](https://www.spotify.com/). This project will take what I've learned these past four weeks and apply it to data collected from Spotify. What I will be doing with this data is looking for patterns from the year 2020 to now in the trending music.  
+
+## About the Data  
+This data was pulled off of Kaggle's website:  
+
+<https://www.kaggle.com/yamaerenay/spotify-dataset-19212020-160k-tracks>  
+
+The raw data contains 174,390 observations and 19 variables. The original poster of this data from Kaggle pulled the data by using the [Spotify web API](https://developer.spotify.com/documentation/web-api/reference/#endpoint-get-track).  
+
+
+## Load Data  
+```{r loadData}
+# read in the data from a CSV file
+Spotifydata <- read.csv("/cloud/project/Final/Data/data.csv")
+
+# display the data in the newly created data frame
+head(Spotifydata)
+```
+## Code book  
+A code book is a dictionary of the variables in a data set that provides their names, labels and any relevant value labels. I am now going to document the variables by reading in the xlsx codebook I created into a data frame. Doing this, will help during the data cleanup and analysis phases to help deepen my understanding on the data I am working with.  
+```{r codebook}
+# read in the data from an XLSX file
+codebook <- Read("/cloud/project/Final/Data/codebook.xlsx", var_labels=FALSE, quiet=TRUE)
+
+# display the codebook
+head(codebook)
+```
+
+## Data Prep & Clean Up  
+Now that I know what the data looks like and have a code book to understand the data, my next step is to clean up the data before I conduct any sort of analysis.  
+
+First, I will look for null values in the dataset.  
+```{r findNullValues}
+#find null values
+Spotifydata[!complete.cases(Spotifydata), ]
+```
+Since there weren't any null values returned, I will now create a new data frame (d) by subsetting the data with logical criterion. This criterion will extract data from the year 2020 and 2021. I will also remove any variables I found unnecessary for this analysis.  
+```{r subsetData}
+#Create a data frame that only grabs data from 2020 and 2021 using lessR.
+d <- Spotifydata[.(year > "2019"),]
+
+#update data frame d to only include the specified columns
+d <- d[,.(-7)]
+```
+
+Along with removing variables, I will now look for duplicated data and remove this from the data set.  
+```{r removeDuplicateValues}
+#Find unique values in the data set and remove duplicate using the dplyr distinct() command.
+d <- d %>% distinct()
+```
+This new data set now has 4,730 observations with 18 variables. By cleaning up and filtering out the data, I have reduced the observation by 169,659 and one variable.  
+
+### Factor  
+Next I will factor by adding value labels to integer variables "mode" and "explicit". Within the code book, these two fields are defined as a 0 or 1 and what these integer values mean. To have more meaningful data, I will update the values to what the code book defines 0 and 1 to represent.  
+```{r factor}
+# update the mode variable to display a categorical value instead of an int
+d$mode <- factor(d$mode, levels=0:1, labels=c("Minor", "Major"))
+
+# update the explicit variable to display a categorical value instead of an int
+d$explicit <- factor(d$explicit, levels=0:1, labels=c("No explicit content", "Explicit content"))
+```
+
+I will also update the key column to display the corresponding tonal counterpart with it's pitch class. These values were pulled from the listed [wiki](https://en.wikipedia.org/wiki/Pitch_class) page on Spotify's API.   
+```{r vectorFactor}
+#create a vector to label the pitch class tonal counterparts
+pitchclass <- c("C","C♯,D♭","D","D♯,E♭","E","F","F♯,G","G","G♯,A♭","A","A♯,B♭","B")
+
+# update the key column to display the corresponding tonal counterpart with it's pitch class
+d$key <- factor(d$key, levels=0:11, labels=pitchclass)
+```
+
+
+## Export data  
+Now that I am done manipulating the original data, I will export this data into an R binary file labeled, 'FinalPrjData'. When working with large data files, it is best to write these files as an R binary format. This will be handy for when I want to share this data file with someone else using R or Python.  
+
+```{r writeBinaryFile}
+# Writing the manipulated data into an R binary file
+Write("FinalPrjData", format="R")
+```
+ As you can see, the d data frame contents were written into the current working directory /cloud/project/Final.  
+  
+![](/cloud/project/Final/Images/directory.png) 
+
+## Data Analysis  
+### Data Frame Manipulation   
+Now I am going into the analysis phase of the project. First, I will split up the d data frame into two data frames (d1 and d2), then I will create a new column to act as a unique index (primary key) and finally I will use the sqldf package to merge the two data frames into a new data frame named "d3".  
+
+
+### Create two new data frames  
+Below, I am splitting up the d data frame into two separate data frames called d1 and d2. Both of these newly created data frames are only grabbing the first 20 rows of data. In d1, there will only be 10 variables ranging from artists to mode. In d2, there will be only two variables called artists and name.  
+
+```{r splitDataFrames}
+#create a data frame named d1 with columns ID to mode
+d1 = d[1:20, .(artists:mode)]
+
+#create a data frame named d2 with columns ID, artists and name
+d2 = d[1:20, .(artists, name)]
+
+#remove all rows with at least one missing data value
+d1 <- na.omit(d1)
+d2 <- na.omit(d2)
+
+#display data frame d1 and d2
+d1
+d2
+```
+### Manipulate Data Frames
+Next,I will create a new variable called "ID" in both d1 and d2. This is a unique index which could also be referred to as the primary key.  
+```{r createIndex}
+#create a common ID field named 'ID' in data frame d1 and d2
+d1$ID = row.names(d1)
+d2$ID = row.names(d2)
+
+#display data frame d1 and d2
+d1[1:5,]
+d2[1:5,]
+```
+
+After creating a unique ID in both data frames, I will remove some rows from both data frames. Doing this, there will be some observations in d1 that d2 does not have and vice versa.  
+```{r deleteRows}
+#Delete some rows from both data frames to show more discernible differences when doing the merging
+row.names(d1) <- NULL
+row.names(d2) <- NULL
+
+#delete some rows from both data frames
+d1 = d1[-c(1,3,6,8), ]
+d2 = d2[-c(2,4), ]
+
+#display data frame d1 and d2
+d1[1:5,]
+d2[1:5,]
+```
+Now some observations in d1 are not in d2. For example,observations with ID 1 and 3 are missing from the d1 data frame and observations with ID 2 and 4 are missing from the d2 data frame.   
+
+Next, I will use the SQLDF package, to do an inner join of these two data frames and merge them into a new data frame called d3.  
+```{r mergeDataFrames}
+#create the new data frame where d1 and d2 inner join
+d3 <- sqldf("SELECT distinct *
+             FROM d1 
+             JOIN d2 on d1.ID = d2.ID"
+            )
+
+#display the results
+d3
+```
+The mentioned observations with ID's 1-4 are now excluded from the d3 data frame. This is because they do not have matching records to link with one another. Data frame, d3, only shows observations that are in both d1 and d2. As you can see from the data above, there are now only 14 observations these two data frames have in common.  
+
+
+### Exploratory Analysis  
+In this next section, I am going to play around with the data and see what can be uncovered through the variety of visualizations.  
+
+
+The below barchart is pulling data from the d data frame. What this bar chart tells me is, under 20% of songs from 2020 and 2021 had explicit content in an individual song. Of course, this only takes into an account what users listen to through Spotify.  
+
+```{r Barchart, echo=FALSE}
+BarChart(explicit, fill = "magentas",ylab="Count of tracks", xlab="Tracks with explicit content or not", quiet=TRUE)
+```
+In the below barchart, I will see if the majority of music was in the major or minor modality for 2020-2021. This is displaying a count of the variable "mode", from the d data frame. Since I factored out the integer values to a more descriptive meaning, this barchart is much easier to understand. I also included descriptive labels on the y and x axis.  
+
+```{r}
+BarChart(mode,fill = "rusts", ylab="Count of modality", xlab="The modality of a song",quiet=TRUE)
+```
+In this next graphic, I am displaying a pie chart with the key variable using the "hues" color scheme. What this pie chart is telling me is, the top tones used in this data set are in "G", "C" and "C♯,D♭". Which is interesting because the "G" and "C" tones can be said to have a similar quality of octave equivalence. This could be used to do a more in-depth analysis on quality of pitch and a correlation between the other variables, such as valence, instrumentalness and etc.  
+
+```{r piechart}
+PieChart(key, hole=0, fill = "hues",main="Count of Pitch Class",quiet=TRUE)
+```
+Next, I will use a histogram to display how the tracks are distributed based off of their danceability rating. This is one of the better variables to use in this data set since it is a continuous numerical value ranging from 0 to 1.The bin width is auto set to 0.1 with 10 bins displayed, 11 outliers and a peak of a danceability score at 0.7. What this tells me is, a majority of the songs in this data set are more suitable for dancing.  
+  
+```{r histogram}
+#Create a histogram with the variable danceability
+hs(danceability,fill="rusts", color="brown", trans=.1)
+```
+Now I am going to look into aggregating some data to see if I can find out any information regarding the popularity of a song. First, I want to subset the data to pull out songs with a popularity score of 50 or higher. Then I will arrange the data to display most popular to least. After doing this, I will put this is a data frame and only keep the top 10 observations.  
+```{r aggregateData}
+# Aggregate the data by first creating a subset of data that is filtered by indices and has a popularity rating of 50 or higher
+agg <- d[, .(2:3, 6,11:13)]
+agg <- filter(agg, popularity > 49)
+
+#sort the data from most popular to least
+agg <- Sort(agg, by=popularity, direction="-", quiet = TRUE)
+
+#Grab the top 10 popular songs
+agg <- agg[1:10,]
+
+#display the results
+agg
+```
+## Conclusion  
+In conclusion, I have discovered, the song "drivers license" was the most popular song listened to on Spotify in 2020-2021 so far. Ariana Grande was the most popular artist, the top 10 songs averaged closer to 1.0 showing the top listened songs all were songs listeners could dance to, listener's prefer explicit content and the mode wasn't a huge factor in songs the listener chose to listen to. I found this data set very interesting and there is a variety of different ways the exploratory analysis could go with this data.   
